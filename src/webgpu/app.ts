@@ -51,6 +51,8 @@ interface Splat {
   color: THREE.Vector3;
 }
 
+type TouchMode = 'orbit' | 'paint';
+
 const FACE = 384;
 const DIAG_FACE = 64;
 const DIAG_SAMPLES = DIAG_FACE * DIAG_FACE * 6;
@@ -788,6 +790,9 @@ class WebGPUSphereSim {
   private painting = false;
   private prevDir: THREE.Vector3 | null = null;
   private latestProbePointer: { x: number; y: number } | null = null;
+  private readonly coarsePointerQuery = window.matchMedia('(pointer: coarse)');
+  private hasCoarsePointer = this.coarsePointerQuery.matches;
+  private touchMode: TouchMode = 'orbit';
   private colorIdx = Math.floor(Math.random() * 6);
   private showUnwrap = false;
   private lastTime = performance.now();
@@ -1125,6 +1130,8 @@ class WebGPUSphereSim {
     const bDay = document.getElementById('b-daynight') as HTMLButtonElement;
     const bUnwrap = document.getElementById('b-unwrap') as HTMLButtonElement;
     const bTexDebug = document.getElementById('b-texdebug') as HTMLButtonElement;
+    const bMobileOrbit = document.getElementById('b-mobile-orbit') as HTMLButtonElement;
+    const bMobilePaint = document.getElementById('b-mobile-paint') as HTMLButtonElement;
     bEmit.addEventListener('click', () => { params.emitters = !params.emitters; bEmit.classList.toggle('active', params.emitters); });
     bDay.addEventListener('click', () => { params.dayNight = !params.dayNight; bDay.classList.toggle('active', params.dayNight); });
     bUnwrap.addEventListener('click', () => {
@@ -1140,6 +1147,13 @@ class WebGPUSphereSim {
       if (this.textureDebug.visible) this.updateTextureDebugPanel();
     });
     document.getElementById('b-reset')!.addEventListener('click', () => this.resetSimulation());
+    bMobileOrbit.addEventListener('click', () => this.setTouchMode('orbit'));
+    bMobilePaint.addEventListener('click', () => this.setTouchMode('paint'));
+    this.coarsePointerQuery.addEventListener('change', (event) => {
+      this.hasCoarsePointer = event.matches;
+      this.applyTouchMode();
+    });
+    this.applyTouchMode();
   }
 
   private bindPointer() {
@@ -1147,34 +1161,76 @@ class WebGPUSphereSim {
     this.canvas.style.userSelect = 'none';
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (e.button === 2) e.preventDefault();
-      if (e.button !== 0) return;
+      if (!this.shouldPaintFromPointer(e)) return;
+      this.blockTouchOrbitIfPainting(e);
       const dir = this.dirAtPointer(e);
       if (!dir) return;
       this.painting = true;
       this.prevDir = null;
       this.colorIdx = (this.colorIdx + 1) % this.palette.length;
+      try { this.canvas.setPointerCapture(e.pointerId); } catch {}
       this.queuePaint(dir);
-    });
+    }, { capture: true });
     this.canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch' && this.touchMode !== 'paint') return;
+      this.blockTouchOrbitIfPainting(e);
       const dir = this.dirAtPointer(e);
       if (this.painting && dir) this.queuePaint(dir);
       if (this.painting && !dir) this.prevDir = null;
-    });
+    }, { capture: true });
     this.canvas.addEventListener('pointerleave', () => {
       this.latestProbePointer = null;
       this.painting = false;
       this.prevDir = null;
     });
-    window.addEventListener('pointerup', () => {
+    window.addEventListener('pointerup', (e) => {
+      if (e.pointerType === 'touch' && this.painting) this.blockTouchOrbitIfPainting(e);
       this.painting = false;
       this.prevDir = null;
-    });
+      try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
+    }, { capture: true });
+    window.addEventListener('pointercancel', (e) => {
+      if (e.pointerType === 'touch' && this.painting) this.blockTouchOrbitIfPainting(e);
+      this.painting = false;
+      this.prevDir = null;
+      try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
+    }, { capture: true });
     window.addEventListener('resize', () => {
       this.sizeDirty = true;
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
     });
+  }
+
+  private setTouchMode(mode: TouchMode) {
+    this.touchMode = mode;
+    this.painting = false;
+    this.prevDir = null;
+    this.applyTouchMode();
+  }
+
+  private applyTouchMode() {
+    const paintMode = this.hasCoarsePointer && this.touchMode === 'paint';
+    this.controls.enabled = !paintMode;
+    document.body.dataset.touchMode = this.touchMode;
+    const bMobileOrbit = document.getElementById('b-mobile-orbit') as HTMLButtonElement | null;
+    const bMobilePaint = document.getElementById('b-mobile-paint') as HTMLButtonElement | null;
+    bMobileOrbit?.classList.toggle('active', this.touchMode === 'orbit');
+    bMobilePaint?.classList.toggle('active', this.touchMode === 'paint');
+    bMobileOrbit?.setAttribute('aria-pressed', String(this.touchMode === 'orbit'));
+    bMobilePaint?.setAttribute('aria-pressed', String(this.touchMode === 'paint'));
+  }
+
+  private shouldPaintFromPointer(e: PointerEvent) {
+    if (e.pointerType === 'touch') return this.touchMode === 'paint';
+    if (e.button === 2) e.preventDefault();
+    return e.button === 0;
+  }
+
+  private blockTouchOrbitIfPainting(e: PointerEvent) {
+    if (e.pointerType !== 'touch' || this.touchMode !== 'paint') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
   }
 
   private queuePaint(dir: THREE.Vector3) {

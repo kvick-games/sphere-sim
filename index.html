@@ -60,6 +60,38 @@
       font-family: inherit; font-size: 11px; cursor: pointer; transition: background 0.15s; }
     button:hover { background: rgba(95,208,224,0.24); }
     button.active { background: rgba(95,208,224,0.3); color: #eafcff; }
+    .mobile-touch-mode {
+      position: fixed;
+      left: 50%;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+      transform: translateX(-50%);
+      display: none;
+      gap: 4px;
+      padding: 4px;
+      z-index: 12;
+      background: rgba(9, 12, 18, 0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      backdrop-filter: blur(12px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      pointer-events: auto;
+    }
+    .mobile-touch-mode button {
+      flex: 0 0 auto;
+      min-width: 74px;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 7px;
+      background: transparent;
+      border-color: transparent;
+      color: #8d9bab;
+      touch-action: manipulation;
+    }
+    .mobile-touch-mode button.active {
+      background: rgba(95,208,224,0.22);
+      border-color: rgba(95,208,224,0.42);
+      color: #eafcff;
+    }
     .hint { margin-top: 12px; font-size: 10px; color: #5a6573; line-height: 1.55; }
     .hint b { color: #8a96a6; font-weight: 600; }
     select { flex: 1; background: rgba(95,208,224,0.12); border: 1px solid rgba(95,208,224,0.35);
@@ -163,10 +195,18 @@
         min-width: 0;
       }
     }
+    @media (pointer: coarse), (max-width: 760px) {
+      .mobile-touch-mode { display: flex; }
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
+
+  <div id="mobile-touch-mode" class="mobile-touch-mode" role="group" aria-label="Touch interaction mode">
+    <button id="b-mobile-orbit" type="button" class="active" aria-pressed="true">orbit</button>
+    <button id="b-mobile-paint" type="button" aria-pressed="false">paint</button>
+  </div>
 
   <div id="panel">
     <h1>Planet Sim</h1>
