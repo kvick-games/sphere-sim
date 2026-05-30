@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Navier–Stokes Smoke on a Sphere</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #050608; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    #panel {
+      position: fixed;
+      top: 14px; left: 14px;
+      width: 248px;
+      padding: 14px 16px 16px;
+      background: rgba(14, 16, 22, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px;
+      color: #c8d0dc;
+      user-select: none;
+      z-index: 10;
+      max-height: calc(100vh - 28px);
+      overflow-y: auto;
+    }
+    #panel h1 {
+      font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+      color: #eef2f8; margin-bottom: 2px;
+    }
+    #panel .sub { font-size: 10px; color: #6b7686; margin-bottom: 12px; line-height: 1.5; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin: 9px 0; gap: 8px; }
+    .row label { color: #9aa6b6; white-space: nowrap; }
+    .row .val { color: #5fd0e0; min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+    input[type="range"] { -webkit-appearance: none; appearance: none; flex: 1; height: 3px;
+      background: rgba(255,255,255,0.14); border-radius: 3px; outline: none; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px;
+      border-radius: 50%; background: #5fd0e0; cursor: pointer; }
+    input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%;
+      background: #5fd0e0; cursor: pointer; }
+    .btnrow { display: flex; gap: 8px; margin-top: 12px; }
+    button { flex: 1; padding: 7px 0; background: rgba(95,208,224,0.12);
+      border: 1px solid rgba(95,208,224,0.35); color: #9fe6f0; border-radius: 7px;
+      font-family: inherit; font-size: 11px; cursor: pointer; transition: background 0.15s; }
+    button:hover { background: rgba(95,208,224,0.24); }
+    button.active { background: rgba(95,208,224,0.3); color: #eafcff; }
+    .hint { margin-top: 12px; font-size: 10px; color: #5a6573; line-height: 1.55; }
+    .hint b { color: #8a96a6; font-weight: 600; }
+    select { flex: 1; background: rgba(95,208,224,0.12); border: 1px solid rgba(95,208,224,0.35);
+      color: #9fe6f0; border-radius: 7px; font-family: inherit; font-size: 11px; padding: 4px 6px;
+      outline: none; cursor: pointer; }
+
+    /* Equirectangular unwrap panel — the WebGL viewport renders into #unwrap-view,
+       which is transparent so the canvas behind shows through; the frame just adds
+       a border + caption. pointer-events:none so it never blocks orbit/paint. */
+    #unwrap-frame {
+      position: fixed; top: 14px; right: 14px;
+      width: clamp(240px, 34vw, 440px);
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px; overflow: hidden;
+      z-index: 9; display: none; pointer-events: none;
+    }
+    #unwrap-frame.show { display: block; }
+    #unwrap-frame .cap {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+      color: #9aa6b6; padding: 7px 10px;
+      background: rgba(14,16,22,0.85);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    #unwrap-view { width: 100%; aspect-ratio: 2 / 1; background: transparent; }
+    #tex-debug {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      width: min(680px, calc(100vw - 330px));
+      min-width: 360px;
+      display: none;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 10px;
+      z-index: 6;
+      background: rgba(5, 7, 12, 0.88);
+      border: 1px solid rgba(130, 210, 230, 0.28);
+      border-radius: 8px;
+      box-shadow: 0 18px 44px rgba(0,0,0,0.38);
+      backdrop-filter: blur(10px);
+      pointer-events: auto;
+    }
+    #tex-debug.show { display: grid; }
+    .tex-card { min-width: 0; }
+    .tex-label {
+      margin-bottom: 6px;
+      font-size: 10px;
+      line-height: 1;
+      color: #a7b2c0;
+      letter-spacing: 0;
+    }
+    .tex-card canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 2 / 1;
+      background: #000;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 5px;
+    }
+    @media (max-width: 760px) {
+      #tex-debug {
+        left: 14px;
+        right: 14px;
+        width: auto;
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="panel">
+    <h1>Planet Sim</h1>
+    <div class="sub">cubemap Navier–Stokes · Coriolis + thermal</div>
+
+    <div class="row">
+      <label>view</label>
+      <select id="sel-view">
+        <option value="temperature" selected>temperature (live)</option>
+        <option value="climate">climate (baked)</option>
+        <option value="wind">wind speed</option>
+        <option value="vorticity">vorticity</option>
+        <option value="pressure">pressure</option>
+        <option value="smoke">smoke tracer</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>underlay</label>
+      <select id="sel-tex">
+        <option value="none">none</option>
+        <option value="earth" selected>earth (day/night)</option>
+        <option value="grid">grid</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>fluid opacity</label>
+      <input id="s-overlay" type="range" min="0" max="1" step="0.05" value="0.45" />
+      <span class="val" id="v-overlay">0.45</span>
+    </div>
+    <div class="row">
+      <label>sun glint</label>
+      <input id="s-glint" type="range" min="0" max="10" step="0.5" value="3" />
+      <span class="val" id="v-glint">3.0</span>
+    </div>
+    <div class="row">
+      <label>atmosphere</label>
+      <input id="s-atmo" type="range" min="0" max="50" step="1" value="16" />
+      <span class="val" id="v-atmo">16</span>
+    </div>
+
+    <div class="row">
+      <label>time scale</label>
+      <input id="s-speed" type="range" min="0.01" max="6" step="0.01" value="0.1" />
+      <span class="val" id="v-speed">6m/s</span>
+    </div>
+    <div class="row">
+      <label>rotation</label>
+      <input id="s-spin" type="range" min="0" max="2" step="0.05" value="1" />
+      <span class="val" id="v-spin">1.00x</span>
+    </div>
+    <div class="row">
+      <label>sun heat</label>
+      <input id="s-sun" type="range" min="0" max="150" step="1" value="62" />
+      <span class="val" id="v-sun">62</span>
+    </div>
+    <div class="row">
+      <label>radiative cool</label>
+      <input id="s-cool" type="range" min="5" max="100" step="1" value="40" />
+      <span class="val" id="v-cool">40</span>
+    </div>
+    <div class="row">
+      <label>greenhouse</label>
+      <input id="s-green" type="range" min="0" max="40" step="1" value="18" />
+      <span class="val" id="v-green">18</span>
+    </div>
+    <div class="row">
+      <label>ocean inertia</label>
+      <input id="s-ocean" type="range" min="1" max="40" step="1" value="7" />
+      <span class="val" id="v-ocean">7</span>
+    </div>
+    <div class="row">
+      <label>coriolis</label>
+      <input id="s-coriolis" type="range" min="0" max="6" step="0.1" value="1.0" />
+      <span class="val" id="v-coriolis">1.0x</span>
+    </div>
+    <div class="row">
+      <label>thermal wind</label>
+      <input id="s-heat" type="range" min="0" max="20" step="0.5" value="6" />
+      <span class="val" id="v-heat">6.0</span>
+    </div>
+    <div class="row">
+      <label>vorticity</label>
+      <input id="s-curl" type="range" min="0" max="50" step="1" value="6" />
+      <span class="val" id="v-curl">6</span>
+    </div>
+    <div class="row">
+      <label>wind drag</label>
+      <input id="s-veldis" type="range" min="0" max="4" step="0.05" value="0.12" />
+      <span class="val" id="v-veldis">0.12</span>
+    </div>
+    <div class="row">
+      <label>smoke decay</label>
+      <input id="s-dendis" type="range" min="0" max="4" step="0.05" value="0.9" />
+      <span class="val" id="v-dendis">0.90</span>
+    </div>
+    <div class="row">
+      <label>pressure it.</label>
+      <input id="s-iter" type="range" min="8" max="50" step="1" value="16" />
+      <span class="val" id="v-iter">16</span>
+    </div>
+    <div class="row">
+      <label>brush size</label>
+      <input id="s-radius" type="range" min="0.2" max="4" step="0.1" value="1.2" />
+      <span class="val" id="v-radius">1.2</span>
+    </div>
+
+    <div class="btnrow">
+      <button id="b-daynight" class="active">day/night</button>
+      <button id="b-emit">emitters</button>
+    </div>
+    <div class="btnrow">
+      <button id="b-unwrap">2D unwrap</button>
+      <button id="b-reset">reset</button>
+    </div>
+    <div class="btnrow">
+      <button id="b-texdebug">textures</button>
+    </div>
+
+    <div class="hint">
+      <b>drag</b> over globe — inject wind + warm air<br />
+      <b>right-drag</b> — orbit camera · <b>scroll</b> — zoom
+    </div>
+  </div>
+
+  <div id="unwrap-frame">
+    <div class="cap">unwrapped · equirectangular</div>
+    <div id="unwrap-view"></div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
