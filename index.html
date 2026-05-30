@@ -10,6 +10,18 @@
     html, body { width: 100%; height: 100%; overflow: hidden; background: #050608; }
     #app { position: fixed; inset: 0; }
     canvas { display: block; }
+    .fatal-webgpu {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #050608;
+      color: #e7edf7;
+      font: 14px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      text-align: center;
+      z-index: 100;
+    }
 
     #panel {
       position: fixed;
@@ -53,6 +65,40 @@
     select { flex: 1; background: rgba(95,208,224,0.12); border: 1px solid rgba(95,208,224,0.35);
       color: #9fe6f0; border-radius: 7px; font-family: inherit; font-size: 11px; padding: 4px 6px;
       outline: none; cursor: pointer; }
+    .diag {
+      margin: 11px 0 13px;
+      padding: 9px 10px;
+      background: rgba(255,255,255,0.035);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 7px;
+    }
+    .diag-head {
+      margin-bottom: 7px;
+      color: #cfd7e4;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .diag-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 5px 10px;
+      align-items: baseline;
+    }
+    .diag-grid span {
+      color: #7f8a9a;
+      font-size: 10px;
+    }
+    .diag-grid b {
+      min-width: 0;
+      color: #78dce8;
+      font-size: 10px;
+      font-weight: 600;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
 
     /* Equirectangular unwrap panel — the WebGL viewport renders into #unwrap-view,
        which is transparent so the canvas behind shows through; the frame just adds
@@ -130,6 +176,7 @@
       <label>view</label>
       <select id="sel-view">
         <option value="temperature" selected>temperature (live)</option>
+        <option value="anomaly">temperature anomaly</option>
         <option value="climate">climate (baked)</option>
         <option value="wind">wind speed</option>
         <option value="vorticity">vorticity</option>
@@ -144,6 +191,17 @@
         <option value="earth" selected>earth (day/night)</option>
         <option value="grid">grid</option>
       </select>
+    </div>
+    <div class="diag" id="temp-diag">
+      <div class="diag-head">temperature diagnostics</div>
+      <div class="diag-grid">
+        <span>min</span><b id="temp-min">--</b>
+        <span>mean</span><b id="temp-mean">--</b>
+        <span>max</span><b id="temp-max">--</b>
+        <span>range</span><b id="temp-spread">--</b>
+        <span>probe</span><b id="temp-probe">--</b>
+        <span>delta base</span><b id="temp-anomaly">--</b>
+      </div>
     </div>
     <div class="row">
       <label>fluid opacity</label>
