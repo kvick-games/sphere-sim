@@ -1242,9 +1242,9 @@ class WebGPUSphereSim {
     this.bloomA?.destroy();
     this.bloomB?.destroy();
     const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
-    this.hdrTexture = this.device.createTexture({ size: { width, height }, format: 'rgba16float', usage });
-    this.bloomA = this.device.createTexture({ size: { width, height }, format: 'rgba16float', usage });
-    this.bloomB = this.device.createTexture({ size: { width, height }, format: 'rgba16float', usage });
+    this.hdrTexture = this.device.createTexture({ label: 'scene-hdr', size: { width, height }, format: 'rgba16float', usage });
+    this.bloomA = this.device.createTexture({ label: 'bloom-a', size: { width, height }, format: 'rgba16float', usage });
+    this.bloomB = this.device.createTexture({ label: 'bloom-b', size: { width, height }, format: 'rgba16float', usage });
     this.hdrView = this.hdrTexture.createView();
     this.bloomAView = this.bloomA.createView();
     this.bloomBView = this.bloomB.createView();
@@ -1531,9 +1531,9 @@ class WebGPUSphereSim {
         { binding: 4, resource: { buffer: this.blurUniform } },
       ],
     });
-    this.postBindGroupBright = make(this.hdrView!, this.bloomAView!);
-    this.postBindGroupBlurA = make(this.bloomAView!, this.bloomBView!);
-    this.postBindGroupBlurB = make(this.bloomBView!, this.bloomAView!);
+    this.postBindGroupBright = make(this.hdrView!, this.blackTexture.view);
+    this.postBindGroupBlurA = make(this.bloomAView!, this.blackTexture.view);
+    this.postBindGroupBlurB = make(this.bloomBView!, this.blackTexture.view);
     this.postBindGroupFinal = make(this.hdrView!, this.bloomAView!);
   }
 
