@@ -33,10 +33,33 @@ const WIND_SCALE = 0.55;
 const VORT_SCALE = 0.06;
 const PRESS_SCALE = 1.6;
 
-const VIEW = { smoke: 0, temperature: 1, wind: 2, vorticity: 3, pressure: 4, climate: 5 };
+const VIEW: Record<string, number> = { smoke: 0, temperature: 1, wind: 2, vorticity: 3, pressure: 4, climate: 5 };
 const DEFAULT_TIME_SCALE = 0.1;  // 6 simulated minutes per real second; one Earth day takes 4 real minutes
 
-const params = {
+interface Params {
+  speed: number;
+  coriolis: number;
+  heating: number;
+  solar: number;
+  cool: number;
+  greenhouse: number;
+  oceanInertia: number;
+  curl: number;
+  velDissipation: number;
+  denDissipation: number;
+  pressureIters: number;
+  brush: number;
+  emitters: boolean;
+  spin: number;
+  dayNight: boolean;
+  viewMode: number;
+  overlay: number;
+  specular: number;
+  atmosphere: number;
+}
+type NumericParamKey = { [K in keyof Params]: Params[K] extends number ? K : never }[keyof Params];
+
+const params: Params = {
   speed: DEFAULT_TIME_SCALE,
   coriolis: 1.0,         // 1.0 = Earth's physical Coriolis rate
   heating: 6.0,
@@ -702,10 +725,14 @@ function fieldBody(use3dLighting) {
         } else {
           fc = cmapTemp(climBaseline(dir));            // baked climatological baseline
         }
-        // fluid is lit by the sun and fades out over the night side
-        float lit = mix(1.0, clamp(sun, 0.0, 1.0), uDayNight);
-        inten *= mix(1.0, day, uDayNight);
-        result = mix(earthCol, fc * lit, inten);      // fluid as a translucent layer
+        if (uViewMode < 1.5) {
+          result = mix(earthCol, fc, inten);          // temperature is diagnostic data, not a lit surface
+        } else {
+          // wind/vorticity/pressure overlays remain lit with the visible globe.
+          float lit = mix(1.0, clamp(sun, 0.0, 1.0), uDayNight);
+          inten *= mix(1.0, day, uDayNight);
+          result = mix(earthCol, fc * lit, inten);    // fluid as a translucent layer
+        }
       }
       return result;
     }
@@ -1345,7 +1372,15 @@ const unwrapFrame = document.getElementById('unwrap-frame');
 const unwrapView = document.getElementById('unwrap-view');
 let showUnwrap = false;
 
-const textureDebug = {
+type TextureDebugKey = 'base' | 'emissive' | 'geo' | 'topo';
+type PreviewableTexture = THREE.Texture & { image?: CanvasImageSource };
+
+const textureDebug: {
+  visible: boolean;
+  el: HTMLDivElement | null;
+  cards: Partial<Record<TextureDebugKey, HTMLCanvasElement>>;
+  textures: Record<TextureDebugKey, THREE.Texture | null>;
+} = {
   visible: false,
   el: null,
   cards: {},
@@ -1363,7 +1398,7 @@ function makeTextureDebugPanel() {
   const panel = document.createElement('div');
   panel.id = 'tex-debug';
 
-  const addCard = (key, label) => {
+  const addCard = (key: TextureDebugKey, label: string) => {
     const card = document.createElement('div');
     card.className = 'tex-card';
     const title = document.createElement('div');
@@ -1387,7 +1422,7 @@ function makeTextureDebugPanel() {
   return panel;
 }
 
-function drawTexturePreview(canvas, tex) {
+function drawTexturePreview(canvas: HTMLCanvasElement, tex: PreviewableTexture | null) {
   const g = canvas.getContext('2d');
   g.clearRect(0, 0, canvas.width, canvas.height);
   g.fillStyle = '#000';
@@ -1415,11 +1450,11 @@ function drawTexturePreview(canvas, tex) {
 function updateTextureDebugPanel() {
   if (!textureDebug.el) return;
   for (const [key, canvas] of Object.entries(textureDebug.cards)) {
-    drawTexturePreview(canvas, textureDebug.textures[key]);
+    drawTexturePreview(canvas, textureDebug.textures[key as TextureDebugKey] as PreviewableTexture | null);
   }
 }
 
-function setTextureDebugVisible(show) {
+function setTextureDebugVisible(show: boolean) {
   textureDebug.visible = show;
   const panel = makeTextureDebugPanel();
   panel.classList.toggle('show', textureDebug.visible);
@@ -1436,7 +1471,7 @@ const TEX_URLS = {
   night: 'https://assets.science.nasa.gov/content/dam/science/esd/eo/images/imagerecords/144000/144897/BlackMarble_2016_01deg_gray.jpg',
   topo: 'https://unpkg.com/three-globe/example/img/earth-topology.png',
 };
-const texCache = {};
+const texCache: Record<string, THREE.Texture> = {};
 function makeCheckerTexture() {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
   const g = c.getContext('2d');
@@ -1468,11 +1503,11 @@ function clearBase() {
   updateTextureDebugPanel();
   for (const m of [sphereMat, unwrapMat]) { m.uniforms.uUseBase.value = 0; m.uniforms.uHasNight.value = 0; }
 }
-function loadCached(key, cb) {
+function loadCached(key: keyof typeof TEX_URLS, cb: (tex: THREE.Texture) => void) {
   if (texCache[key]) { cb(texCache[key]); return; }
   loader.load(TEX_URLS[key], (t) => { t.wrapS = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; texCache[key] = t; cb(t); });
 }
-function setUnderlay(key) {
+function setUnderlay(key: string) {
   if (key === 'none') { clearBase(); return; }
   if (key === 'grid') {
     if (!texCache.grid) { texCache.grid = makeCheckerTexture(); texCache.grid.wrapS = THREE.RepeatWrapping; }
@@ -1571,12 +1606,13 @@ function runEmitters(physicalDays) {
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
-function bindSlider(id, valId, key, fmt) {
-  const s = document.getElementById(id), v = document.getElementById(valId);
+function bindSlider(id: string, valId: string, key: NumericParamKey, fmt?: (x: number) => string) {
+  const s = document.getElementById(id) as HTMLInputElement;
+  const v = document.getElementById(valId) as HTMLElement;
   const update = () => { params[key] = parseFloat(s.value); v.textContent = fmt ? fmt(params[key]) : s.value; };
   s.addEventListener('input', update); update();
 }
-function formatTimeScale(x) {
+function formatTimeScale(x: number) {
   const minutesPerSecond = x * PHYSICAL_SECONDS_PER_REAL_SECOND / 60;
   if (minutesPerSecond < 60) return `${minutesPerSecond.toFixed(0)}m/s`;
   const hoursPerSecond = minutesPerSecond / 60;
@@ -1599,17 +1635,17 @@ bindSlider('s-dendis', 'v-dendis', 'denDissipation', (x) => x.toFixed(2));
 bindSlider('s-iter', 'v-iter', 'pressureIters');
 bindSlider('s-radius', 'v-radius', 'brush', (x) => x.toFixed(1));
 
-const selView = document.getElementById('sel-view');
+const selView = document.getElementById('sel-view') as HTMLSelectElement;
 selView.addEventListener('change', () => { params.viewMode = VIEW[selView.value]; });
 params.viewMode = VIEW[selView.value];
 
-const selTex = document.getElementById('sel-tex');
+const selTex = document.getElementById('sel-tex') as HTMLSelectElement;
 selTex.addEventListener('change', () => setUnderlay(selTex.value));
 
-const bEmit = document.getElementById('b-emit');
-const bDay = document.getElementById('b-daynight');
-const bUnwrap = document.getElementById('b-unwrap');
-const bTexDebug = document.getElementById('b-texdebug');
+const bEmit = document.getElementById('b-emit') as HTMLButtonElement;
+const bDay = document.getElementById('b-daynight') as HTMLButtonElement;
+const bUnwrap = document.getElementById('b-unwrap') as HTMLButtonElement;
+const bTexDebug = document.getElementById('b-texdebug') as HTMLButtonElement;
 bEmit.addEventListener('click', () => { params.emitters = !params.emitters; bEmit.classList.toggle('active', params.emitters); });
 bDay.addEventListener('click', () => { params.dayNight = !params.dayNight; bDay.classList.toggle('active', params.dayNight); });
 bUnwrap.addEventListener('click', () => { showUnwrap = !showUnwrap; bUnwrap.classList.toggle('active', showUnwrap); unwrapFrame.classList.toggle('show', showUnwrap); });
@@ -1674,7 +1710,7 @@ function advanceGlobalClock(elapsed) {
 // transport from Earth radius + wind speed, and lunar motion from the sidereal
 // month. Slow frames are clamped so the solver never receives a catch-up spike.
 let lastTime = performance.now();
-function frame(now) {
+function frame(now = performance.now()) {
   requestAnimationFrame(frame);
   if (now === undefined) now = performance.now();
   let elapsed = (now - lastTime) / 1000;
