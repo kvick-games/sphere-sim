@@ -695,8 +695,15 @@ export async function startWebGPUApp() {
     throw new Error('WebGPU required: no compatible GPU adapter was found.');
   }
   const device = await adapter.requestDevice();
+  let deviceErrorShown = false;
   device.addEventListener('uncapturederror', (event) => {
     console.error('WebGPU uncaptured error:', event.error.message);
+    if (deviceErrorShown || document.querySelector('.fatal-webgpu')) return;
+    deviceErrorShown = true;
+    const panel = document.createElement('div');
+    panel.className = 'fatal-webgpu';
+    panel.textContent = `WebGPU runtime error: ${event.error.message}`;
+    document.body.appendChild(panel);
   });
   const app = new WebGPUSphereSim(device, nav.gpu);
   await app.start();
