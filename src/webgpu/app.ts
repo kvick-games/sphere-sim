@@ -790,6 +790,8 @@ class WebGPUSphereSim {
   private painting = false;
   private prevDir: THREE.Vector3 | null = null;
   private latestProbePointer: { x: number; y: number } | null = null;
+  private readonly orbitInputEvents = new WeakSet<PointerEvent>();
+  private desktopOrbitFlip: { pointerId: number; startY: number } | null = null;
   private readonly coarsePointerQuery = window.matchMedia('(pointer: coarse)');
   private hasCoarsePointer = this.coarsePointerQuery.matches;
   private touchMode: TouchMode = 'orbit';
@@ -1160,6 +1162,7 @@ class WebGPUSphereSim {
     this.canvas.style.touchAction = 'none';
     this.canvas.style.userSelect = 'none';
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.bindDesktopOrbitAxisFix();
     this.canvas.addEventListener('pointerdown', (e) => {
       if (!this.shouldPaintFromPointer(e)) return;
       this.blockTouchOrbitIfPainting(e);
@@ -1191,6 +1194,7 @@ class WebGPUSphereSim {
     }, { capture: true });
     window.addEventListener('pointercancel', (e) => {
       if (e.pointerType === 'touch' && this.painting) this.blockTouchOrbitIfPainting(e);
+      if (this.desktopOrbitFlip?.pointerId === e.pointerId) this.desktopOrbitFlip = null;
       this.painting = false;
       this.prevDir = null;
       try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
@@ -1200,6 +1204,51 @@ class WebGPUSphereSim {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
     });
+  }
+
+  private bindDesktopOrbitAxisFix() {
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.orbitInputEvents.has(e) || e.pointerType !== 'mouse' || e.button !== 2) return;
+      this.desktopOrbitFlip = { pointerId: e.pointerId, startY: e.clientY };
+    }, { capture: true });
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (this.orbitInputEvents.has(e) || e.pointerType !== 'mouse') return;
+      const active = this.desktopOrbitFlip;
+      if (!active || active.pointerId !== e.pointerId || (e.buttons & 2) === 0) return;
+
+      const mirrored = new PointerEvent(e.type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+        isPrimary: e.isPrimary,
+        width: e.width,
+        height: e.height,
+        pressure: e.pressure,
+        tangentialPressure: e.tangentialPressure,
+        tiltX: e.tiltX,
+        tiltY: e.tiltY,
+        twist: e.twist,
+        button: e.button,
+        buttons: e.buttons,
+        clientX: e.clientX,
+        clientY: active.startY - (e.clientY - active.startY),
+        screenX: e.screenX,
+        screenY: e.screenY,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+      });
+      this.orbitInputEvents.add(mirrored);
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.canvas.dispatchEvent(mirrored);
+    }, { capture: true });
+    window.addEventListener('pointerup', (e) => {
+      if (this.desktopOrbitFlip?.pointerId === e.pointerId) this.desktopOrbitFlip = null;
+    }, { capture: true });
   }
 
   private setTouchMode(mode: TouchMode) {
