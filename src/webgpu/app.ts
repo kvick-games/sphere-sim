@@ -593,10 +593,14 @@ fn scene_color(uvIn: vec2<f32>, unwrap: bool) -> vec4<f32> {
   }
 
   let sunAng = acos(clamp(dot(rd, normalize(u.sunWorld.xyz)), -1.0, 1.0));
-  let sunRadius = u.sunWorld.w;
-  if (sunAng < sunRadius * 2.2 && shp.x < 0.0) {
-    let disk = smoothstep(sunRadius * 1.18, sunRadius * 0.70, sunAng);
-    col = col + vec3<f32>(28.0, 24.0, 17.0) * disk;
+  let sunRadius = max(u.sunWorld.w, 0.0036);
+  if (shp.x < 0.0) {
+    let disk = smoothstep(sunRadius * 1.08, sunRadius * 0.82, sunAng);
+    let coronaCore = exp(-max(sunAng - sunRadius, 0.0) / (sunRadius * 2.6));
+    let coronaMask = 1.0 - smoothstep(sunRadius * 3.0, sunRadius * 18.0, sunAng);
+    let corona = coronaCore * coronaMask;
+    col = col + vec3<f32>(34.0, 29.0, 20.0) * disk;
+    col = col + vec3<f32>(4.0, 2.8, 1.35) * corona * (1.0 - disk);
   }
 
   return vec4<f32>(col, 1.0);
@@ -646,7 +650,7 @@ fn vs(@builtin(vertex_index) vi: u32) -> VSOut {
 fn fs_bright(in: VSOut) -> @location(0) vec4<f32> {
   let c = textureSampleLevel(hdrTex, linearSampler, in.uv, 0.0).rgb;
   let l = max(c.r, max(c.g, c.b));
-  let bright = max(l - 1.0, 0.0) / max(l, 0.0001);
+  let bright = smoothstep(2.2, 8.0, l);
   return vec4<f32>(c * bright, 1.0);
 }
 
@@ -661,25 +665,36 @@ fn fs_blur(in: VSOut) -> @location(0) vec4<f32> {
   return vec4<f32>(c, 1.0);
 }
 
-fn sample_safe(tex: texture_2d<f32>, uv: vec2<f32>) -> vec3<f32> {
-  if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return vec3<f32>(0.0); }
-  return textureSampleLevel(tex, linearSampler, uv, 0.0).rgb;
+fn lens_gaussian(uv: vec2<f32>, center: vec2<f32>, radius: f32, aspect: f32) -> f32 {
+  let d = (uv - center) * vec2<f32>(aspect, 1.0);
+  return exp(-dot(d, d) / max(radius * radius, 0.000001));
 }
 
 @fragment
 fn fs_final(in: VSOut) -> @location(0) vec4<f32> {
   var col = textureSampleLevel(hdrTex, linearSampler, in.uv, 0.0).rgb;
   let bloom = textureSampleLevel(bloomTex, linearSampler, in.uv, 0.0).rgb;
-  col = col + bloom * 0.75 * u.lens.x;
+  let bloomVis = u.lens.x;
+  let directVis = u.lens.y;
+  let aspect = u.resolution.x / max(u.resolution.y, 1.0);
+  let sunUv = u.sun.xy;
+  let center = vec2<f32>(0.5);
+  col = col + bloom * 0.55 * bloomVis;
 
-  let axis = in.uv - u.sun.xy;
-  let ghostVis = u.lens.y;
+  let sunVector = (in.uv - sunUv) * vec2<f32>(aspect, 1.0);
+  let sunDist = length(sunVector);
+  let veil = exp(-sunDist * 8.5) * bloomVis * 0.055;
+  col = col + vec3<f32>(1.0, 0.78, 0.46) * veil;
+
+  let axis = center - sunUv;
+  let offAxis = length(axis * vec2<f32>(aspect, 1.0));
+  let ghostGate = directVis * (1.0 - smoothstep(0.82, 1.25, offAxis));
   var ghosts = vec3<f32>(0.0);
-  ghosts = ghosts + sample_safe(bloomTex, u.sun.xy - axis * 0.42) * vec3<f32>(0.75, 0.95, 1.15) * 0.30;
-  ghosts = ghosts + sample_safe(bloomTex, u.sun.xy - axis * 0.86) * vec3<f32>(1.10, 0.72, 0.45) * 0.18;
-  ghosts = ghosts + sample_safe(bloomTex, u.sun.xy - axis * 1.25) * vec3<f32>(0.45, 0.75, 1.10) * 0.11;
-  let vignette = smoothstep(1.0, 0.1, length(in.uv - vec2<f32>(0.5)));
-  col = col + ghosts * ghostVis * vignette;
+  ghosts = ghosts + vec3<f32>(1.0, 0.62, 0.35) * lens_gaussian(in.uv, center + axis * 0.85, 0.070, aspect) * 0.070;
+  ghosts = ghosts + vec3<f32>(0.42, 0.74, 1.0) * lens_gaussian(in.uv, center + axis * 1.45, 0.105, aspect) * 0.040;
+  ghosts = ghosts + vec3<f32>(0.70, 1.0, 0.72) * lens_gaussian(in.uv, center + axis * 2.12, 0.048, aspect) * 0.030;
+  let vignette = 1.0 - smoothstep(0.62, 1.05, length((in.uv - center) * vec2<f32>(aspect, 1.0)));
+  col = col + ghosts * ghostGate * vignette;
 
   col = col / (col + vec3<f32>(1.0));
   col = pow(col, vec3<f32>(1.0 / 2.2));
@@ -1594,20 +1609,28 @@ class WebGPUSphereSim {
   }
 
   private sunScreenState() {
-    const view = SUN_WORLD.clone().applyMatrix4(this.camera.matrixWorldInverse);
+    const sunPos = SUN_WORLD.clone().multiplyScalar(SUN_DISTANCE);
+    const view = sunPos.clone().applyMatrix4(this.camera.matrixWorldInverse);
     const uv = new THREE.Vector2(0.5, 0.5);
     if (view.z >= -this.camera.near) return { uv, bloom: 0, ghost: 0 };
-    const projected = SUN_WORLD.clone().project(this.camera);
+    const projected = sunPos.clone().project(this.camera);
     uv.set(projected.x * 0.5 + 0.5, projected.y * 0.5 + 0.5);
     const margin = 0.28;
     const off = Math.max(Math.abs(uv.x - 0.5) - 0.5, Math.abs(uv.y - 0.5) - 0.5);
     const offFade = 1 - THREE.MathUtils.smoothstep(off, 0, margin);
     const cam = this.camera.position;
-    const sunRay = SUN_WORLD.clone().normalize();
-    const closest = cam.clone().sub(sunRay.clone().multiplyScalar(cam.dot(sunRay))).length();
-    const occult = 1 - THREE.MathUtils.smoothstep(closest, 0.92, 1.08);
+    const toSun = sunPos.clone().sub(cam);
+    const sunRay = toSun.clone().normalize();
+    const tClosest = -cam.dot(sunRay);
+    let occult = 0;
+    if (tClosest > 0 && tClosest < toSun.length()) {
+      const closest = cam.clone().add(sunRay.clone().multiplyScalar(tClosest)).length();
+      occult = 1 - THREE.MathUtils.smoothstep(closest, 0.98, 1.08);
+    }
     const visibility = Math.max(0, 1 - occult) * offFade;
-    return { uv, bloom: Math.pow(visibility, 0.55), ghost: visibility };
+    const screenEdge = Math.max(Math.abs(uv.x - 0.5), Math.abs(uv.y - 0.5));
+    const onScreen = 1 - THREE.MathUtils.smoothstep(screenEdge, 0.46, 0.58);
+    return { uv, bloom: Math.pow(visibility, 0.55), ghost: visibility * onScreen };
   }
 
   private ensureSceneBindGroup() {
